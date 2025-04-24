@@ -1,98 +1,96 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title> GREAT GROUP CALL</title>
+  <title>Group Video Chat</title>
   <style>
     body {
-      font-family: Arial, sans-serif;
+      font-family: sans-serif;
+      background-color: #f4f4f4;
       text-align: center;
-      background: #f4f4f4;
-    }
-    h2 {
-      color: #333;
     }
     video {
       width: 200px;
       margin: 10px;
-      border-radius: 12px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      border-radius: 10px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
     }
     #videos {
       display: flex;
       flex-wrap: wrap;
       justify-content: center;
-      padding: 10px;
+      padding: 20px;
     }
-    .error {
+    #errorMsg {
       color: red;
       font-weight: bold;
     }
   </style>
 </head>
 <body>
-  <h2>🔗 Welcome to the GREAT GROUP CALL</h2>
-  <p>If you don't see your camera, please allow permissions!</p>
+  <h2>🌐 GREAT GROUP CALL</h2>
+  <p>Anyone with this link joins this call</p>
   <div id="videos">
     <video id="myVideo" autoplay muted playsinline></video>
   </div>
-  <p class="error" id="errorMsg"></p>
+  <p id="errorMsg"></p>
 
-  <!-- External scripts -->
   <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/simple-peer@9.11.1/simplepeer.min.js"></script>
-
   <script>
-    const socket = io('https://video-signal-server.glitch.me'); // Public signaling server
+    const socket = io('https://video-signal-server.glitch.me');
     const peers = {};
     const myVideo = document.getElementById('myVideo');
     const videos = document.getElementById('videos');
     const errorMsg = document.getElementById('errorMsg');
 
-    // Check for browser support
+    let myStream;
+
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      errorMsg.textContent = "🚫 Your browser does not support camera access. Try Chrome or Safari.";
-      throw new Error("Browser does not support mediaDevices");
+      errorMsg.textContent = "Browser doesn't support camera access!";
+    } else {
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+        .then(stream => {
+          myStream = stream;
+          myVideo.srcObject = stream;
+
+          socket.emit('join-room', 'great-group-room');
+
+          socket.on('all-users', users => {
+            users.forEach(userId => {
+              const peer = createPeer(userId, socket.id, stream);
+              peers[userId] = peer;
+            });
+          });
+
+          socket.on('user-joined', payload => {
+            const peer = addPeer(payload.signal, payload.callerId, stream);
+            peers[payload.callerId] = peer;
+          });
+
+          socket.on('receiving-returned-signal', payload => {
+            const peer = peers[payload.id];
+            peer.signal(payload.signal);
+          });
+
+          socket.on('user-disconnected', id => {
+            if (peers[id]) {
+              peers[id].destroy();
+              const vid = document.getElementById(id);
+              if (vid) vid.remove();
+              delete peers[id];
+            }
+          });
+        })
+        .catch(err => {
+          errorMsg.textContent = "Please allow camera/mic permission.";
+        });
     }
-
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then(stream => {
-        myVideo.srcObject = stream;
-
-        socket.emit('join-room', 'great-room');
-
-        socket.on('user-joined', id => {
-          const peer = createPeer(id, socket.id, stream);
-          peers[id] = peer;
-        });
-
-        socket.on('signal', ({ from, signal }) => {
-          if (!peers[from]) {
-            const peer = addPeer(signal, from, stream);
-            peers[from] = peer;
-          } else {
-            peers[from].signal(signal);
-          }
-        });
-
-        socket.on('user-left', id => {
-          if (peers[id]) {
-            peers[id].destroy();
-            const vid = document.getElementById(id);
-            if (vid) vid.remove();
-            delete peers[id];
-          }
-        });
-      })
-      .catch(err => {
-        errorMsg.textContent = "❌ Camera/Microphone access blocked. Please allow permission from your browser settings.";
-        console.error("Permission error:", err);
-      });
 
     function createPeer(userToSignal, callerID, stream) {
       const peer = new SimplePeer({ initiator: true, trickle: false, stream });
 
       peer.on('signal', signal => {
-        socket.emit('signal', { to: userToSignal, from: callerID, signal });
+        socket.emit('sending-signal', { userToSignal, callerID, signal });
       });
 
       peer.on('stream', remoteStream => {
@@ -106,7 +104,7 @@
       const peer = new SimplePeer({ initiator: false, trickle: false, stream });
 
       peer.on('signal', signal => {
-        socket.emit('signal', { to: id, from: socket.id, signal });
+        socket.emit('returning-signal', { signal, callerId: id });
       });
 
       peer.signal(incomingSignal);
@@ -121,9 +119,9 @@
     function addVideo(stream, id) {
       const video = document.createElement('video');
       video.srcObject = stream;
-      video.id = id;
       video.autoplay = true;
       video.playsInline = true;
+      video.id = id;
       videos.appendChild(video);
     }
   </script>
